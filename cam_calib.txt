@@ -1,0 +1,335 @@
+Cam Calibration
+
+create a new project called cam_calib in folder UE_9
+uncheck Debug
+
+add the following PATHs in projectfile cam_calib.pro at the end:
+
+INCLUDEPATH += U:\opencv401\include
+
+LIBS += U:\opencv401\bin\libopencv_core401.dll
+LIBS += U:\opencv401\bin\libopencv_highgui401.dll
+LIBS += U:\opencv401\bin\libopencv_imgcodecs401.dll
+LIBS += U:\opencv401\bin\libopencv_imgproc401.dll
+LIBS += U:\opencv401\bin\libopencv_videoio401.dll
+LIBS += U:\opencv401\bin\libopencv_video401.dll
+LIBS += U:\opencv401\bin\libopencv_features2d401.dll
+LIBS += U:\opencv401\bin\libopencv_calib3d401.dll
+LIBS += U:\opencv401\bin\libopencv_aruco401.dll
+ ----------------------------------------
+include in mainwindow.cpp under the #include "ui_mainwindow.h" further files for openCV-routines:
+ 
+//opencv
+#include <opencv2/video.hpp>
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/imgproc.hpp"
+#include "opencv2/videoio.hpp"
+#include <opencv2/highgui.hpp>
+#include <opencv2/aruco.hpp>
+#include "opencv2/core.hpp"
+#include <opencv2/calib3d.hpp>
+
+#include <iostream>
+#include <sstream>
+#include <fstream>
+
+using namespace cv;
+using namespace std;
+ --------------------------------------
+unter using namespace std;
+ define additional parameters which we can use to adjust the behaviour of the program:
+ 
+// Global variables
+Mat frame1;
+int keyboard; //input from keyboard
+const float calibrationSquareDimension=0.0255f; //size of chessboard fields in [m]
+const float arucoSquareDimension=0.05f; //size of our future aruco markers
+const Size chessboardDimensions=Size(9,6); //this is the crosses between the chessboard fields
+Mat cameraMatrix = Mat::eye(3,3,CV_64F);  //creates a Matlab-style identity matrix
+Mat distanceCoefficients;
+ --------------------------
+in function MainWindow under
+ ui->setupUi(this);
+  call our function:  
+processvideo();
+ ----------------------
+after the destructor MainWindow::~MainWindow()
+{
+    delete ui;
+}
+let's define what our function does:
+
+void MainWindow::processvideo()
+{
+    //createArucoMarkers();
+    CameraCalibrationProcess(cameraMatrix, distanceCoefficients);
+    //loadCameraCalibration("Cameracalibration", cameraMatrix, distanceCoefficients);
+    //startWebcamMonitoring(cameraMatrix, distanceCoefficients, arucoSquareDimension);
+}
+ -------------------------
+Our function processvideo simply calls other functions. We still have to define them:
+
+void MainWindow::createArucoMarkers()
+{
+    Mat outputMarker;
+    
+    Ptr<aruco::Dictionary> markerDictionary = aruco::getPredefinedDictionary(aruco::PREDEFINED_DICTIONARY_NAME::DICT_4X4_50);
+    
+    for(int i = 0; i < 50; i++)
+    {
+        aruco::drawMarker(markerDictionary, i, 500, outputMarker, 1);
+        ostringstream convert;
+        string imageName="4x4Marker_";
+        convert << imageName << i << ".jpg";
+        imwrite(convert.str(), outputMarker);
+    }
+}
+
+
+void MainWindow::createKnownBoardPosition(Size boardSize, float squareEdgeLength, vector<Point3f>& corners)
+{
+    for(int i =0; i < boardSize.height; i++)
+    {
+        for (int j=0; j< boardSize.width; j++)
+        {
+            corners.push_back(Point3f(j*squareEdgeLength, i*squareEdgeLength, 0.0f));
+        }
+    }
+}
+
+
+void MainWindow::getChessboardCorners(vector<Mat> images, vector<vector<Point2f>>& allfoundCorners, bool showResults)
+{
+    for (vector<Mat>::iterator iter=images.begin(); iter !=images.end(); iter++)
+    {
+        vector<Point2f> pointBuf;
+        bool found = findChessboardCorners(*iter, Size(9,6), pointBuf, CALIB_CB_ADAPTIVE_THRESH | CALIB_CB_NORMALIZE_IMAGE);
+        
+        if (found)
+        {
+            allfoundCorners.push_back(pointBuf);
+        }
+        if(showResults)
+        {
+            drawChessboardCorners(*iter, Size(9,6), pointBuf, found);
+            imshow("Looking for Corners",*iter);
+            waitKey();
+        }
+    }
+}
+
+void MainWindow::cameraCalibration(vector<Mat> calibrationImages, Size boardSize, float squareEdgeLength, Mat& cameraMatrix, Mat& distanceCoefficients)
+{
+    vector<vector<Point2f>>checkerboardImageSpacePoints;
+    getChessboardCorners(calibrationImages, checkerboardImageSpacePoints, false);
+    
+    vector<vector<Point3f>> worldSpaceCornerPoints(1);
+    
+    createKnownBoardPosition(boardSize, squareEdgeLength, worldSpaceCornerPoints[0]);
+    worldSpaceCornerPoints.resize(checkerboardImageSpacePoints.size(), worldSpaceCornerPoints[0]);
+    
+    vector<Mat> rVectors, tVectors;
+    distanceCoefficients=Mat::zeros(8,1,CV_64F);
+    
+    calibrateCamera(worldSpaceCornerPoints, checkerboardImageSpacePoints, boardSize, cameraMatrix, distanceCoefficients, rVectors, tVectors);
+}
+
+
+bool MainWindow::saveCameraCalibration(String name, Mat cameraMatrix, Mat distanceCoefficients)
+{
+    ofstream outStream(name);
+    if(outStream)
+    {
+        uint16_t rows=cameraMatrix.rows;
+        uint16_t columns=cameraMatrix.cols;
+        
+        outStream<<rows<<endl;
+        outStream<<columns<<endl;
+        
+        
+        for(int r = 0; r < rows; r++)
+        {
+            for(int c = 0; c < columns; c++)
+            {
+                double value = cameraMatrix.at<double>(r,c);
+                outStream<<value<<endl;
+            }
+        }
+        rows = distanceCoefficients.rows;
+        columns = distanceCoefficients.cols;
+        
+        outStream<<rows<<endl;
+        outStream<<columns<<endl;
+        
+        for(int r = 0; r < rows; r++)
+        {
+            for(int c = 0; c < columns; c++)
+            {
+                double value = distanceCoefficients.at<double>(r,c);
+                outStream<<value<<endl;
+            }
+        }
+        outStream.close();
+        return true;
+    }
+    return false;
+}
+
+
+bool MainWindow::loadCameraCalibration(string name, Mat& cameraMatrix, Mat& distanceCoefficients)
+{
+    ifstream inStream(name);
+    if (inStream)
+    {
+        uint16_t rows;
+        uint16_t columns;        
+        inStream>>rows;
+        inStream>>columns;
+        
+        cameraMatrix=Mat(Size(columns, rows), CV_64F);
+        
+        for(int r=0; r<rows; r++)
+        {
+            for(int c=0; c < columns; c++)
+            {
+                double read=0.0f;
+                inStream>>read;
+                cameraMatrix.at<double>(r,c)=read;
+                cout<<cameraMatrix.at<double>(r,c)<<"\n";
+            }
+        }
+        //Distance Coefficients
+        inStream>>rows;
+        inStream>>columns;
+        
+        distanceCoefficients=Mat::zeros(rows, columns, CV_64F);
+        
+        for(int r=0; r<rows; r++)
+        {
+            for(int c=0; c < columns; c++)
+            {
+                double read=0.0f;
+                inStream>>read;
+                distanceCoefficients.at<double>(r,c)=read;
+                cout<<distanceCoefficients.at<double>(r,c)<< "\n";
+            }
+        }
+        inStream.close();
+        return true;
+    }
+    return false;
+}
+
+void MainWindow::CameraCalibrationProcess(Mat& cameraMatrix, Mat& distanceCoefficients)
+{
+    
+    Mat frame;
+    Mat drawToFrame;
+    vector<Mat> savedImages;
+    namedWindow("Webcam", WINDOW_AUTOSIZE);
+    
+    VideoCapture vid(0);
+    
+    if(!vid.isOpened())
+    {
+        cout<<"ERROR ACQUIRING VIDEO FEED\n";
+        exit(EXIT_FAILURE);
+    }    
+    
+    while(true)
+    {
+        if(!vid.read(frame))
+            break;
+        
+        vector<Vec2f> foundPoints;
+        bool found = false;
+        
+        found = findChessboardCorners(frame, chessboardDimensions, foundPoints, CALIB_CB_ADAPTIVE_THRESH | CALIB_CB_NORMALIZE_IMAGE);
+        
+        frame.copyTo(drawToFrame);
+        drawChessboardCorners(drawToFrame, chessboardDimensions, foundPoints, found);
+        if(found)
+            imshow("Webcam", drawToFrame);
+        else
+            imshow("Webcam", frame);
+        
+        
+        switch(waitKey(10))
+        {
+        case' ':
+            //saving image by pressing SPACE
+            if(found)
+            {
+                Mat temp;
+                frame.copyTo(temp);
+                savedImages.push_back(temp);
+                cout<<"Foto aufgenommen. Anzahl:"<<savedImages.size()<<endl;
+            }
+            break;
+        case 13:
+            //start calibration process of saved images by pressing ENTER
+            if(savedImages.size()>15)
+            {
+                cout<<"calibration started..."<<endl;
+                cameraCalibration(savedImages, chessboardDimensions, calibrationSquareDimension, cameraMatrix, distanceCoefficients);
+                saveCameraCalibration("Cameracalibration", cameraMatrix, distanceCoefficients);
+                cout<<"saved calibration."<<endl;
+            }
+            break;
+        case 27:
+            //exit by pressing ESC
+            destroyAllWindows();
+            cout<<"Program finished."<<endl;
+            return;
+        }
+        
+    }
+}
+ -----------------------
+Now, we still have to declare these functions in the headerfile.
+switch to mainwindow.h
+Add under ~MainWindow();:
+
+    void createArucoMarkers();
+    void processvideo();
+    void getChessboardCorners(vector<Mat> images, vector<vector<Point2f>>& allfoundCorners, bool showResults);
+    void createKnownBoardPosition(Size boardSize, float squareEdgeLength, vector<Point3f>& corners);
+    void cameraCalibration(vector<Mat> calibrationImages, Size boardSize, float squareEdgeLength, Mat& cameraMatrix, Mat& distanceCoefficients);
+    bool loadCameraCalibration(string name, Mat& cameraMatrix, Mat& distanceCoefficients);
+    bool saveCameraCalibration(String name, Mat cameraMatrix, Mat distanceCoefficients);
+    void CameraCalibrationProcess(Mat& cameraMatrix, Mat& distanceCoefficients);
+    int startWebcamMonitoring(const Mat& cameraMatrix, const Mat& distanceCoefficients, float arucoSquareDimension);
+ -------------------------
+To avoid writing cv::Mat etc und std::vector etc every time in the header file, add after #include <QMainWindow>:
+#include <opencv2/opencv.hpp>
+using namespace cv;
+using namespace std;
+ ------------------------
+ 
+ -save all
+ -build (= compile the individual cpp-files + link them to a .exe file)
+ -copy the dlls into the newly created folder 
+ -attach a webcam
+ 
+ 
+A typical cam calib.matrix looks like this:
+
+3			//means the calib matrix has 3 rows
+3			//means the calib matrix has 3 columns
+803.54		//camera const in x-direction
+0			//cam const * shear --> here shear is zero
+235.785		//optical center-x expressed in pixels
+0			//always zero
+819.909		//cam const times (1+scale difference)
+539.964		//optical center-y expressed in pixels
+0			//always zero
+0			//always zero
+1			//always 1
+5			//the non linearity is expressed in 5 columns
+1			//and one row (= it is a 5x1 Vector)
+-0.45418	//radial distortion koefficient k1
+0.350919	//radial distortion koefficient k2
+-0.0437492	//tangential distortion koefficient p1
+-0.00157205	//tangential distortion koefficient p2
+-0.142265	//radial distortion koefficient k3
+
