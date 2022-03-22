@@ -1,6 +1,6 @@
 Cam Calibration
 
-create a new project called cam_calib in folder UE_9
+create a new project called camera_calibration
 uncheck Debug
 
 add the following PATHs in projectfile cam_calib.pro at the end:
